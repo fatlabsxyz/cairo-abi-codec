@@ -1,6 +1,38 @@
-# Serializing Arbitrary Cairo Structures with starknet.js
+# starknet-structure-encoding
 
-Encode any Cairo struct to calldata using `CallData.compile()` without deploying a contract.
+Encode any Cairo struct to calldata using starknet.js without deploying a contract.
+
+## Installation
+
+```bash
+pnpm add starknet-structure-encoding
+```
+
+## Quick Start
+
+```typescript
+import { encodeStruct, createStructEncoder } from "starknet-structure-encoding";
+
+// Define your struct ABI (structs + enums only, no interface needed)
+const abi = [
+  {
+    type: "struct",
+    name: "MyStruct",
+    members: [
+      { name: "id", type: "u64" },
+      { name: "value", type: "felt252" }
+    ]
+  }
+];
+
+// One-off encoding
+const encoded = encodeStruct(abi, "MyStruct", { id: 1n, value: 42n });
+
+// Or create a reusable encoder
+const encode = createStructEncoder(abi, "MyStruct");
+encode({ id: 1n, value: 42n });
+encode({ id: 2n, value: 100n });
+```
 
 ## The Problem
 

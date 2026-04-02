@@ -1,9 +1,12 @@
 {
   "name": "starknet-structure-encoding",
   "version": "1.0.0",
-  "description": "",
+  "description": "Encode arbitrary Cairo structs to calldata",
   "type": "module",
-  "main": "dist/index.js",
+  "main": "dist/encoder.js",
+  "exports": {
+    ".": "./dist/encoder.js"
+  },
   "scripts": {
     "build": "tsc",
     "start": "node dist/index.js",
