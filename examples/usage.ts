@@ -1,10 +1,11 @@
 import { CairoOption, CairoOptionVariant } from "starknet";
 import {
-  createTypedEncoder,
+  createTypedCodec,
   encodeStructTyped,
+  decodeStructTyped,
   type StructType,
   type ExtractAbiStructNames,
-} from "../src/typed-encoder.js";
+} from "../src/typed-encoder.ts";
 
 // Define the ABI as const to preserve literal types
 const structAbi = [
@@ -66,31 +67,44 @@ const myStructEmpty: MyStruct = {
   maybe_inner: new CairoOption(CairoOptionVariant.None),
 };
 
-// === Type-safe encoding ===
-console.log("=== Type-Safe Encoder ===");
+// === Reusable codec ===
+console.log("=== Type-Safe Codec ===");
 
-// Option 1: Create a reusable encoder
-const encoder = createTypedEncoder(structAbi);
+const codec = createTypedCodec(structAbi);
 
 // Struct name is autocompleted, data is type-checked
-const encoded1 = encoder.encode("MyStruct", myStruct);
+const encoded1 = codec.encode("MyStruct", myStruct);
 console.log("Encoded (with nested Some):", encoded1);
 
-const encoded2 = encoder.encode("MyStruct", myStructEmpty);
+const encoded2 = codec.encode("MyStruct", myStructEmpty);
 console.log("Encoded (with None):", encoded2);
 
-// Can also encode InnerStruct directly
-const encodedInner = encoder.encode("InnerStruct", inner);
+const encodedInner = codec.encode("InnerStruct", inner);
 console.log("Encoded InnerStruct:", encodedInner);
 
-// Option 2: One-off encoding
-console.log("\n=== One-off encoding ===");
-const oneOff = encodeStructTyped(structAbi, "MyStruct", myStruct);
-console.log("One-off encoded:", oneOff);
+// === Decoding ===
+console.log("\n=== Decoding ===");
 
-// === Type safety demonstration ===
-console.log("\n=== Type Safety ===");
-console.log("TypeScript catches errors at compile time:");
-console.log("- Wrong struct name: encoder.encode('InvalidStruct', data)");
-console.log("- Wrong data shape: encoder.encode('MyStruct', { wrong: 'data' })");
-console.log("- Missing fields: encoder.encode('MyStruct', { id: 1n })");
+const decoded1 = codec.decode("MyStruct", encoded1);
+console.log("Decoded (with nested Some):", decoded1);
+console.log("  id:", decoded1.id);
+console.log("  maybe_inner is Some?", decoded1.maybe_inner.isSome());
+console.log("  inner value:", decoded1.maybe_inner.unwrap()!.value);
+
+const decoded2 = codec.decode("MyStruct", encoded2);
+console.log("Decoded (with None):", decoded2);
+console.log("  id:", decoded2.id);
+console.log("  maybe_inner is None?", decoded2.maybe_inner.isNone());
+
+// === Roundtrip ===
+console.log("\n=== Roundtrip ===");
+const roundtripped = codec.decode("MyStruct", codec.encode("MyStruct", myStruct));
+console.log("Original id:", myStruct.id, "→ Roundtripped id:", roundtripped.id);
+
+// === One-off helpers ===
+console.log("\n=== One-off helpers ===");
+const oneOffEncoded = encodeStructTyped(structAbi, "MyStruct", myStruct);
+console.log("One-off encoded:", oneOffEncoded);
+
+const oneOffDecoded = decodeStructTyped(structAbi, "MyStruct", oneOffEncoded);
+console.log("One-off decoded id:", oneOffDecoded.id);
