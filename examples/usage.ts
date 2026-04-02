@@ -4,7 +4,7 @@ import {
   encodeStructTyped,
   type StructType,
   type ExtractAbiStructNames,
-} from "./typed-encoder.js";
+} from "../src/typed-encoder.js";
 
 // Define the ABI as const to preserve literal types
 const structAbi = [

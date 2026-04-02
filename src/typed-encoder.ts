@@ -27,11 +27,53 @@ export type StructType<
 > = StringToPrimitiveType<TAbi, TStructName>;
 
 // ============================================================================
-// Type-Safe Encoder
+// Internal Helpers
+// ============================================================================
+
+function buildWrappedAbi<TAbi extends Abi>(abi: TAbi) {
+  return [
+    {
+      type: "interface" as const,
+      name: "__Wrapper__",
+      items: [
+        {
+          type: "function" as const,
+          name: "__codec__",
+          inputs: [{ name: "data", type: "__PLACEHOLDER__" }],
+          outputs: [{ type: "__PLACEHOLDER__" }],
+          state_mutability: "external" as const,
+        },
+      ],
+    },
+    ...abi,
+  ];
+}
+
+function patchAbi(
+  wrappedAbi: ReturnType<typeof buildWrappedAbi>,
+  structName: string
+) {
+  return wrappedAbi.map((item) => {
+    if (item.type === "interface" && item.name === "__Wrapper__") {
+      return {
+        ...item,
+        items: item.items.map((fn) => ({
+          ...fn,
+          inputs: [{ name: "data", type: structName }],
+          outputs: [{ type: structName }],
+        })),
+      };
+    }
+    return item;
+  });
+}
+
+// ============================================================================
+// Type-Safe Codec
 // ============================================================================
 
 /**
- * Creates a type-safe encoder for structs defined in an ABI.
+ * Creates a type-safe codec for structs defined in an ABI.
  * Uses abi-wan-kanabi for type inference.
  *
  * @example
@@ -39,53 +81,33 @@ export type StructType<
  *   { type: "struct", name: "MyStruct", members: [...] },
  * ] as const;
  *
- * const encoder = createTypedEncoder(abi);
- * const encoded = encoder.encode("MyStruct", myData); // Type-checked!
+ * const codec = createTypedCodec(abi);
+ * const encoded = codec.encode("MyStruct", myData);
+ * const decoded = codec.decode("MyStruct", encoded);
  */
-export function createTypedEncoder<TAbi extends Abi>(abi: TAbi) {
-  const wrappedAbi = [
-    {
-      type: "interface" as const,
-      name: "__Wrapper__",
-      items: [
-        {
-          type: "function" as const,
-          name: "__encode__",
-          inputs: [{ name: "data", type: "__PLACEHOLDER__" }],
-          outputs: [],
-          state_mutability: "external" as const,
-        },
-      ],
-    },
-    ...abi,
-  ];
+export function createTypedCodec<TAbi extends Abi>(abi: TAbi) {
+  const wrappedAbi = buildWrappedAbi(abi);
 
   return {
-    /**
-     * Encodes a struct to calldata.
-     * @param structName - The name of the struct type (autocompleted from ABI)
-     * @param data - The data to encode (type-checked against ABI)
-     */
     encode<TStructName extends ExtractAbiStructNames<TAbi>>(
       structName: TStructName,
       data: StructType<TAbi, TStructName>
     ): string[] {
-      // Patch the placeholder with the actual struct type
-      const patchedAbi = wrappedAbi.map((item) => {
-        if (item.type === "interface" && item.name === "__Wrapper__") {
-          return {
-            ...item,
-            items: item.items.map((fn) => ({
-              ...fn,
-              inputs: [{ name: "data", type: structName }],
-            })),
-          };
-        }
-        return item;
-      });
-
+      const patchedAbi = patchAbi(wrappedAbi, structName);
       const callData = new CallData(patchedAbi);
-      return callData.compile("__encode__", [data] as RawArgs) as string[];
+      return callData.compile("__codec__", [data] as RawArgs) as string[];
+    },
+
+    decode<TStructName extends ExtractAbiStructNames<TAbi>>(
+      structName: TStructName,
+      calldata: string[]
+    ): StructType<TAbi, TStructName> {
+      const patchedAbi = patchAbi(wrappedAbi, structName);
+      const callData = new CallData(patchedAbi);
+      return callData.parse(
+        "__codec__",
+        calldata
+      ) as StructType<TAbi, TStructName>;
     },
   };
 }
@@ -101,6 +123,24 @@ export function encodeStructTyped<
   structName: TStructName,
   data: StructType<TAbi, TStructName>
 ): string[] {
-  const encoder = createTypedEncoder(abi);
-  return encoder.encode(structName, data);
+  const codec = createTypedCodec(abi);
+  return codec.encode(structName, data);
 }
+
+/**
+ * One-off type-safe decoding.
+ */
+export function decodeStructTyped<
+  TAbi extends Abi,
+  TStructName extends ExtractAbiStructNames<TAbi>,
+>(
+  abi: TAbi,
+  structName: TStructName,
+  calldata: string[]
+): StructType<TAbi, TStructName> {
+  const codec = createTypedCodec(abi);
+  return codec.decode(structName, calldata);
+}
+
+/** @deprecated Use `createTypedCodec` instead. */
+export const createTypedEncoder = createTypedCodec;
