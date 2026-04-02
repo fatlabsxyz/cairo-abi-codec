@@ -1,6 +1,6 @@
 # starknet-structure-encoding
 
-Encode any Cairo struct to calldata using starknet.js without deploying a contract.
+Type-safe encoding of arbitrary Cairo structs to calldata using starknet.js.
 
 ## Installation
 
@@ -11,140 +11,128 @@ pnpm add starknet-structure-encoding
 ## Quick Start
 
 ```typescript
-import { encodeStruct, createStructEncoder } from "starknet-structure-encoding";
+import { CairoOption, CairoOptionVariant } from "starknet";
+import { createTypedEncoder, StructType } from "starknet-structure-encoding";
 
-// Define your struct ABI (structs + enums only, no interface needed)
+// Define your ABI as const (required for type inference)
 const abi = [
   {
     type: "struct",
     name: "MyStruct",
     members: [
-      { name: "id", type: "u64" },
-      { name: "value", type: "felt252" }
-    ]
-  }
-];
+      { name: "id", type: "core::integer::u64" },
+      { name: "value", type: "core::felt252" },
+    ],
+  },
+] as const;
 
-// One-off encoding
-const encoded = encodeStruct(abi, "MyStruct", { id: 1n, value: 42n });
+// Create encoder - struct names are autocompleted!
+const encoder = createTypedEncoder(abi);
 
-// Or create a reusable encoder
-const encode = createStructEncoder(abi, "MyStruct");
-encode({ id: 1n, value: 42n });
-encode({ id: 2n, value: 100n });
+// Type is inferred from the ABI
+type MyStruct = StructType<typeof abi, "MyStruct">;
+
+const data: MyStruct = { id: 1n, value: 42n };
+const encoded = encoder.encode("MyStruct", data);
+// Result: ['1', '42']
 ```
 
-## The Problem
+## Type Safety
 
-`CallData.compile()` requires a **function name**, not a struct name. It looks up the function's input types in the ABI to know how to serialize your data.
-
-## The Solution
-
-Create a dummy interface with a dummy function that takes your struct as input:
+The encoder provides full type safety:
 
 ```typescript
-const abi = [
-  {
-    type: "interface",
-    name: "DummyContract",
-    items: [
-      {
-        type: "function",
-        name: "serialize",           // dummy function name
-        inputs: [{ name: "data", type: "MyStruct" }],
-        outputs: [],
-        state_mutability: "external"
-      }
-    ]
-  },
-  {
-    type: "struct",
-    name: "MyStruct",
-    members: [
-      { name: "id", type: "u64" },
-      { name: "value", type: "felt252" }
-    ]
-  }
-];
+// Struct names are autocompleted from the ABI
+encoder.encode("MyStruct", data);     // OK
+encoder.encode("InvalidName", data);  // Compile error
 
-const callData = new CallData(abi);
-const encoded = callData.compile("serialize", [myStructInstance]);
+// Data is type-checked against the ABI
+encoder.encode("MyStruct", { id: 1n, value: 42n });        // OK
+encoder.encode("MyStruct", { id: 1n });                    // Error: missing 'value'
+encoder.encode("MyStruct", { id: "wrong", value: 42n });   // Error: wrong type
 ```
 
 ## Handling Option Types
 
-Use `Option::<T>` syntax (with `::`) instead of `Option<T>`:
+Use `Option::<T>` syntax (with `::`) and include enum definitions:
 
 ```typescript
-// Wrong - won't be recognized as Option
-{ name: "maybe_value", type: "core::option::Option<u64>" }
+const abi = [
+  {
+    type: "struct",
+    name: "MyStruct",
+    members: [
+      { name: "id", type: "core::integer::u64" },
+      { name: "maybe_value", type: "core::option::Option::<core::integer::u64>" },
+    ],
+  },
+  {
+    type: "enum",
+    name: "core::option::Option::<core::integer::u64>",
+    variants: [
+      { name: "Some", type: "core::integer::u64" },
+      { name: "None", type: "()" },
+    ],
+  },
+] as const;
 
-// Correct
-{ name: "maybe_value", type: "core::option::Option::<u64>" }
+// Type includes CairoOption
+type MyStruct = StructType<typeof abi, "MyStruct">;
+// = { id: bigint; maybe_value: CairoOption<bigint> }
+
+const data: MyStruct = {
+  id: 1n,
+  maybe_value: new CairoOption(CairoOptionVariant.Some, 42n),
+};
+
+const encoder = createTypedEncoder(abi);
+encoder.encode("MyStruct", data);
+// Result: ['1', '0', '42']
 ```
-
-This is due to a quirk in starknet.js type detection that checks for `Option::` prefix.
 
 ## Complete Example with Nested Options
 
 ```typescript
-import { CairoOption, CairoOptionVariant, CallData } from "starknet";
-
-interface InnerStruct {
-  value: bigint;
-  maybe_number: CairoOption<bigint>;
-}
-
-interface MyStruct {
-  id: bigint;
-  maybe_inner: CairoOption<InnerStruct>;
-}
+import { CairoOption, CairoOptionVariant } from "starknet";
+import { createTypedEncoder, StructType } from "starknet-structure-encoding";
 
 const abi = [
-  {
-    type: "interface",
-    name: "DummyContract",
-    items: [{
-      type: "function",
-      name: "serialize",
-      inputs: [{ name: "data", type: "MyStruct" }],
-      outputs: [],
-      state_mutability: "external"
-    }]
-  },
   {
     type: "struct",
     name: "InnerStruct",
     members: [
-      { name: "value", type: "u64" },
-      { name: "maybe_number", type: "core::option::Option::<u64>" }
-    ]
+      { name: "value", type: "core::integer::u64" },
+      { name: "maybe_number", type: "core::option::Option::<core::integer::u64>" },
+    ],
   },
   {
     type: "struct",
     name: "MyStruct",
     members: [
-      { name: "id", type: "u64" },
-      { name: "maybe_inner", type: "core::option::Option::<InnerStruct>" }
-    ]
+      { name: "id", type: "core::integer::u64" },
+      { name: "maybe_inner", type: "core::option::Option::<InnerStruct>" },
+    ],
   },
   {
     type: "enum",
-    name: "core::option::Option::<u64>",
+    name: "core::option::Option::<core::integer::u64>",
     variants: [
-      { name: "Some", type: "u64" },
-      { name: "None", type: "()" }
-    ]
+      { name: "Some", type: "core::integer::u64" },
+      { name: "None", type: "()" },
+    ],
   },
   {
     type: "enum",
     name: "core::option::Option::<InnerStruct>",
     variants: [
       { name: "Some", type: "InnerStruct" },
-      { name: "None", type: "()" }
-    ]
-  }
-];
+      { name: "None", type: "()" },
+    ],
+  },
+] as const;
+
+type InnerStruct = StructType<typeof abi, "InnerStruct">;
+type MyStruct = StructType<typeof abi, "MyStruct">;
 
 const inner: InnerStruct = {
   value: 100n,
@@ -156,15 +144,60 @@ const myStruct: MyStruct = {
   maybe_inner: new CairoOption(CairoOptionVariant.Some, inner),
 };
 
-const callData = new CallData(abi);
-const encoded = callData.compile("serialize", [myStruct]);
+const encoder = createTypedEncoder(abi);
+const encoded = encoder.encode("MyStruct", myStruct);
 // Result: ['1', '0', '100', '0', '42']
 //          id   Some value  Some 42
 ```
 
-## Key Points
+## API
 
-1. **Dummy interface required** - `CallData` needs an interface to recognize the ABI as Cairo 1
-2. **Dummy function required** - `compile()` takes a function name, not a struct name
-3. **Use `Option::<T>` syntax** - Required for starknet.js to detect Option types
-4. **Include all enum variants** - Each Option type needs its own enum definition in the ABI
+### `createTypedEncoder(abi)`
+
+Creates a reusable encoder for the given ABI. Best for encoding multiple structs.
+
+```typescript
+const encoder = createTypedEncoder(abi);
+encoder.encode("StructName", data);
+```
+
+### `encodeStructTyped(abi, structName, data)`
+
+One-off encoding. Creates the encoder internally each time.
+
+```typescript
+import { encodeStructTyped } from "starknet-structure-encoding";
+
+const encoded = encodeStructTyped(abi, "MyStruct", data);
+```
+
+### `StructType<TAbi, TStructName>`
+
+Type utility to extract the TypeScript type for a struct from the ABI.
+
+```typescript
+type MyStruct = StructType<typeof abi, "MyStruct">;
+```
+
+### `ExtractAbiStructNames<TAbi>`
+
+Type utility to get a union of all struct names in the ABI.
+
+```typescript
+type Names = ExtractAbiStructNames<typeof abi>;
+// = "InnerStruct" | "MyStruct"
+```
+
+## How It Works
+
+`CallData.compile()` requires a function name, not a struct name. This library:
+
+1. Wraps your struct ABI with a dummy interface and function
+2. Uses the function to encode your struct
+3. Provides type safety via TypeScript generics (inspired by abi-wan-kanabi)
+
+## Important Notes
+
+- **Use `as const`** on your ABI for type inference to work
+- **Use `Option::<T>` syntax** (with `::`) for Option types - this is a starknet.js quirk
+- **Include enum definitions** for each Option type in your ABI

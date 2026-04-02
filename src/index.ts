@@ -1,40 +1,34 @@
-import { CairoOption, CairoOptionVariant, type Abi } from "starknet";
-import { encodeStruct, createStructEncoder } from "./encoder.js";
+import { CairoOption, CairoOptionVariant } from "starknet";
+import {
+  createTypedEncoder,
+  encodeStructTyped,
+  type StructType,
+  type ExtractAbiStructNames,
+} from "./typed-encoder.js";
 
-// Define your struct types
-interface InnerStruct {
-  value: bigint;
-  maybe_number: CairoOption<bigint>;
-}
-
-interface MyStruct {
-  id: bigint;
-  maybe_inner: CairoOption<InnerStruct>;
-}
-
-// Define only the struct/enum ABI - no interface or function needed
+// Define the ABI as const to preserve literal types
 const structAbi = [
   {
     type: "struct",
     name: "InnerStruct",
     members: [
-      { name: "value", type: "u64" },
-      { name: "maybe_number", type: "core::option::Option::<u64>" },
+      { name: "value", type: "core::integer::u64" },
+      { name: "maybe_number", type: "core::option::Option::<core::integer::u64>" },
     ],
   },
   {
     type: "struct",
     name: "MyStruct",
     members: [
-      { name: "id", type: "u64" },
+      { name: "id", type: "core::integer::u64" },
       { name: "maybe_inner", type: "core::option::Option::<InnerStruct>" },
     ],
   },
   {
     type: "enum",
-    name: "core::option::Option::<u64>",
+    name: "core::option::Option::<core::integer::u64>",
     variants: [
-      { name: "Some", type: "u64" },
+      { name: "Some", type: "core::integer::u64" },
       { name: "None", type: "()" },
     ],
   },
@@ -48,7 +42,15 @@ const structAbi = [
   },
 ] as const;
 
-// Example data
+// Type is inferred from the ABI!
+type MyStruct = StructType<typeof structAbi, "MyStruct">;
+type InnerStruct = StructType<typeof structAbi, "InnerStruct">;
+
+// Show available struct names (for demonstration)
+type AvailableStructs = ExtractAbiStructNames<typeof structAbi>;
+// = "InnerStruct" | "MyStruct"
+
+// Example data - TypeScript will verify this matches the ABI
 const inner: InnerStruct = {
   value: 100n,
   maybe_number: new CairoOption<bigint>(CairoOptionVariant.Some, 42n),
@@ -64,17 +66,31 @@ const myStructEmpty: MyStruct = {
   maybe_inner: new CairoOption(CairoOptionVariant.None),
 };
 
-// Option 1: One-off encoding
-console.log("=== Using encodeStruct() ===");
-const encoded1 = encodeStruct(structAbi, "MyStruct", myStruct);
+// === Type-safe encoding ===
+console.log("=== Type-Safe Encoder ===");
+
+// Option 1: Create a reusable encoder
+const encoder = createTypedEncoder(structAbi);
+
+// Struct name is autocompleted, data is type-checked
+const encoded1 = encoder.encode("MyStruct", myStruct);
 console.log("Encoded (with nested Some):", encoded1);
 
-const encoded2 = encodeStruct(structAbi, "MyStruct", myStructEmpty);
+const encoded2 = encoder.encode("MyStruct", myStructEmpty);
 console.log("Encoded (with None):", encoded2);
 
-// Option 2: Reusable encoder (better for multiple encodings)
-console.log("\n=== Using createStructEncoder() ===");
-const encodeMyStruct = createStructEncoder(structAbi, "MyStruct");
+// Can also encode InnerStruct directly
+const encodedInner = encoder.encode("InnerStruct", inner);
+console.log("Encoded InnerStruct:", encodedInner);
 
-console.log("Encoded (with nested Some):", encodeMyStruct(myStruct));
-console.log("Encoded (with None):", encodeMyStruct(myStructEmpty));
+// Option 2: One-off encoding
+console.log("\n=== One-off encoding ===");
+const oneOff = encodeStructTyped(structAbi, "MyStruct", myStruct);
+console.log("One-off encoded:", oneOff);
+
+// === Type safety demonstration ===
+console.log("\n=== Type Safety ===");
+console.log("TypeScript catches errors at compile time:");
+console.log("- Wrong struct name: encoder.encode('InvalidStruct', data)");
+console.log("- Wrong data shape: encoder.encode('MyStruct', { wrong: 'data' })");
+console.log("- Missing fields: encoder.encode('MyStruct', { id: 1n })");

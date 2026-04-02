@@ -5,7 +5,8 @@
   "type": "module",
   "main": "dist/encoder.js",
   "exports": {
-    ".": "./dist/encoder.js"
+    ".": "./dist/typed-encoder.js",
+    "./untyped": "./dist/encoder.js"
   },
   "scripts": {
     "build": "tsc",
