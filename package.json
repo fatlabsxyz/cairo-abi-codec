@@ -23,6 +23,7 @@
     "typescript": "^6.0.2"
   },
   "dependencies": {
+    "abi-wan-kanabi": "^2.2.4",
     "starknet": "^9.4.2"
   }
 }

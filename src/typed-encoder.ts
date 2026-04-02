@@ -1,160 +1,30 @@
-import { CallData, CairoOption, type RawArgs } from "starknet";
+import { CallData, type RawArgs } from "starknet";
+import type {
+  Abi,
+  ExtractAbiStructNames,
+  StringToPrimitiveType,
+} from "abi-wan-kanabi/kanabi";
+
+// Re-export useful types from abi-wan-kanabi
+export type { Abi, ExtractAbiStructNames } from "abi-wan-kanabi/kanabi";
 
 // ============================================================================
-// ABI Type Definitions (from abi-wan-kanabi)
+// Public Type Utilities
 // ============================================================================
-
-type AbiParameter = { name: string; type: string };
-type AbiMember = { name: string; type: string };
-
-type AbiStruct = {
-  type: "struct";
-  name: string;
-  members: readonly AbiMember[];
-};
-
-type AbiEnum = {
-  type: "enum";
-  name: string;
-  variants: readonly AbiParameter[];
-};
-
-type AbiInterface = {
-  type: "interface";
-  name: string;
-  items: readonly AbiFunction[];
-};
-
-type AbiFunction = {
-  type: "function";
-  name: string;
-  inputs: readonly AbiParameter[];
-  outputs: readonly { type: string }[];
-  state_mutability: "view" | "external";
-};
-
-export type Abi = readonly (AbiStruct | AbiEnum | AbiInterface | AbiFunction)[];
-
-// ============================================================================
-// Type Extraction Utilities
-// ============================================================================
-
-type ExtractAbiStructs<TAbi extends Abi> = Extract<TAbi[number], { type: "struct" }>;
-type ExtractAbiEnums<TAbi extends Abi> = Extract<TAbi[number], { type: "enum" }>;
-
-export type ExtractAbiStructNames<TAbi extends Abi> = ExtractAbiStructs<TAbi>["name"];
-
-type ExtractAbiStruct<
-  TAbi extends Abi,
-  TStructName extends string,
-> = Extract<ExtractAbiStructs<TAbi>, { name: TStructName }>;
-
-type ExtractAbiEnum<
-  TAbi extends Abi,
-  TEnumName extends string,
-> = Extract<ExtractAbiEnums<TAbi>, { name: TEnumName }>;
-
-// ============================================================================
-// Cairo Primitive Types
-// ============================================================================
-
-type CairoFelt = "core::felt252";
-type CairoInt = `core::integer::u${8 | 16 | 32}`;
-type CairoBigInt = `core::integer::u${64 | 128}`;
-type CairoU256 = "core::integer::u256";
-type CairoBool = "core::bool";
-type CairoVoid = "()";
-type CairoContractAddress = "core::starknet::contract_address::ContractAddress";
-type CairoByteArray = "core::byte_array::ByteArray";
-
-type CairoPrimitive =
-  | CairoFelt
-  | CairoInt
-  | CairoBigInt
-  | CairoU256
-  | CairoBool
-  | CairoVoid
-  | CairoContractAddress
-  | CairoByteArray;
-
-// ============================================================================
-// Generic Type Patterns
-// ============================================================================
-
-type CairoOptionPattern<T extends string> = `core::option::Option::<${T}>`;
-type CairoArrayPattern<T extends string> =
-  | `core::array::Array::<${T}>`
-  | `core::array::Span::<${T}>`;
-
-// ============================================================================
-// Primitive Type Mapping
-// ============================================================================
-
-type PrimitiveTypeMap = {
-  [K in CairoFelt]: bigint | number | string;
-} & {
-  [K in CairoInt]: number;
-} & {
-  [K in CairoBigInt]: bigint;
-} & {
-  [K in CairoU256]: bigint | { low: bigint; high: bigint };
-} & {
-  [K in CairoBool]: boolean;
-} & {
-  [K in CairoVoid]: void;
-} & {
-  [K in CairoContractAddress]: string;
-} & {
-  [K in CairoByteArray]: string;
-};
-
-// ============================================================================
-// Main Type Conversion: ABI String -> TypeScript Type
-// ============================================================================
-
-/**
- * Converts a Cairo type string to its TypeScript equivalent.
- * Uses CairoOption<T> for option types (compatible with starknet.js runtime).
- */
-export type AbiTypeToPrimitive<
-  TAbi extends Abi,
-  T extends string,
-> =
-  // Primitive types
-  T extends CairoPrimitive
-    ? PrimitiveTypeMap[T]
-    // Option<T> -> CairoOption<T>
-    : T extends CairoOptionPattern<infer Inner>
-      ? CairoOption<AbiTypeToPrimitive<TAbi, Inner>>
-      // Array<T> -> T[]
-      : T extends CairoArrayPattern<infer Inner>
-        ? AbiTypeToPrimitive<TAbi, Inner>[]
-        // Struct lookup
-        : ExtractAbiStruct<TAbi, T> extends {
-              type: "struct";
-              members: infer TMembers extends readonly AbiMember[];
-            }
-          ? {
-              [M in TMembers[number] as M["name"]]: AbiTypeToPrimitive<TAbi, M["type"]>;
-            }
-          // Enum lookup (union of variants)
-          : ExtractAbiEnum<TAbi, T> extends {
-                type: "enum";
-                variants: infer TVariants extends readonly AbiParameter[];
-              }
-            ? {
-                [V in TVariants[number] as V["name"]]: AbiTypeToPrimitive<TAbi, V["type"]>;
-              }[TVariants[number]["name"]]
-            // Unknown type
-            : unknown;
 
 /**
  * Gets the TypeScript type for a struct defined in the ABI.
+ * starknet.js already configures abi-wan-kanabi to use CairoOption<T>
+ * for Option types via module declaration merging.
+ *
+ * @example
+ * const abi = [...] as const;
+ * type MyStruct = StructType<typeof abi, "MyStruct">;
  */
 export type StructType<
   TAbi extends Abi,
   TStructName extends ExtractAbiStructNames<TAbi>,
-> = AbiTypeToPrimitive<TAbi, TStructName>;
+> = StringToPrimitiveType<TAbi, TStructName>;
 
 // ============================================================================
 // Type-Safe Encoder
@@ -162,6 +32,7 @@ export type StructType<
 
 /**
  * Creates a type-safe encoder for structs defined in an ABI.
+ * Uses abi-wan-kanabi for type inference.
  *
  * @example
  * const abi = [
