@@ -1,5 +1,5 @@
 {
-  "name": "@fatsolutions/cairo-abi-struct",
+  "name": "@fatsolutions/cairo-abi-codec",
   "version": "1.0.0",
   "description": "Encode arbitrary Cairo structs to calldata",
   "type": "module",
