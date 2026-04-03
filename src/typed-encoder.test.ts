@@ -236,6 +236,140 @@ describe("createTypedCodec (ContractAddress)", () => {
   });
 });
 
+// -- ContractAddress in nested types --
+
+const nestedAddressAbi = [
+  {
+    type: "struct",
+    name: "Wallet",
+    members: [
+      { name: "owner", type: "core::starknet::contract_address::ContractAddress" },
+      { name: "balance", type: "core::integer::u64" },
+    ],
+  },
+  {
+    type: "struct",
+    name: "WithOptionalAddress",
+    members: [
+      { name: "maybe_addr", type: "core::option::Option::<core::starknet::contract_address::ContractAddress>" },
+    ],
+  },
+  {
+    type: "enum",
+    name: "core::option::Option::<core::starknet::contract_address::ContractAddress>",
+    variants: [
+      { name: "Some", type: "core::starknet::contract_address::ContractAddress" },
+      { name: "None", type: "()" },
+    ],
+  },
+  {
+    type: "struct",
+    name: "WithOptionalWallet",
+    members: [
+      { name: "maybe_wallet", type: "core::option::Option::<Wallet>" },
+    ],
+  },
+  {
+    type: "enum",
+    name: "core::option::Option::<Wallet>",
+    variants: [
+      { name: "Some", type: "Wallet" },
+      { name: "None", type: "()" },
+    ],
+  },
+  {
+    type: "struct",
+    name: "WalletList",
+    members: [
+      { name: "wallets", type: "core::array::Array::<Wallet>" },
+    ],
+  },
+  {
+    type: "struct",
+    name: "NestedStruct",
+    members: [
+      { name: "wallet", type: "Wallet" },
+      { name: "tag", type: "core::integer::u64" },
+    ],
+  },
+  {
+    type: "enum",
+    name: "Target",
+    variants: [
+      { name: "Address", type: "core::starknet::contract_address::ContractAddress" },
+      { name: "None", type: "()" },
+    ],
+  },
+] as const;
+
+describe("createTypedCodec (nested ContractAddress)", () => {
+  const codec = createTypedCodec(nestedAddressAbi);
+
+  it("transforms address inside Option Some", () => {
+    const data = {
+      maybe_addr: new CairoOption(CairoOptionVariant.Some, ADDR_A),
+    };
+    const encoded = codec.encode("WithOptionalAddress", data);
+    const decoded = codec.decode("WithOptionalAddress", encoded);
+    ok(decoded.maybe_addr instanceof CairoOption);
+    ok(decoded.maybe_addr.isSome());
+    deepStrictEqual(decoded.maybe_addr.unwrap(), ADDR_A);
+  });
+
+  it("preserves Option None", () => {
+    const data = {
+      maybe_addr: new CairoOption<string>(CairoOptionVariant.None),
+    };
+    const encoded = codec.encode("WithOptionalAddress", data);
+    const decoded = codec.decode("WithOptionalAddress", encoded);
+    ok(decoded.maybe_addr instanceof CairoOption);
+    ok(decoded.maybe_addr.isNone());
+  });
+
+  it("transforms address inside Option<Struct>", () => {
+    const wallet = { owner: ADDR_A, balance: 1000n };
+    const data = {
+      maybe_wallet: new CairoOption(CairoOptionVariant.Some, wallet),
+    };
+    const encoded = codec.encode("WithOptionalWallet", data);
+    const decoded = codec.decode("WithOptionalWallet", encoded);
+    ok(decoded.maybe_wallet.isSome());
+    deepStrictEqual(decoded.maybe_wallet.unwrap().owner, ADDR_A);
+    deepStrictEqual(decoded.maybe_wallet.unwrap().balance, 1000n);
+  });
+
+  it("transforms addresses inside Array<Struct>", () => {
+    const data = {
+      wallets: [
+        { owner: ADDR_A, balance: 100n },
+        { owner: ADDR_B, balance: 200n },
+      ],
+    };
+    const encoded = codec.encode("WalletList", data);
+    const decoded = codec.decode("WalletList", encoded);
+    ok(Array.isArray(decoded.wallets));
+    deepStrictEqual(decoded.wallets[0].owner, ADDR_A);
+    deepStrictEqual(decoded.wallets[1].owner, ADDR_B);
+  });
+
+  it("transforms address in nested struct", () => {
+    const data = { wallet: { owner: ADDR_B, balance: 50n }, tag: 7n };
+    const encoded = codec.encode("NestedStruct", data);
+    const decoded = codec.decode("NestedStruct", encoded);
+    deepStrictEqual(decoded.wallet.owner, ADDR_B);
+    deepStrictEqual(decoded.tag, 7n);
+  });
+
+  it("transforms address inside custom enum variant", () => {
+    const data = new CairoCustomEnum({ Address: ADDR_A });
+    const encoded = codec.encode("Target", data);
+    const decoded = codec.decode("Target", encoded);
+    ok(decoded instanceof CairoCustomEnum);
+    deepStrictEqual(decoded.activeVariant(), "Address");
+    deepStrictEqual(decoded.unwrap(), ADDR_A);
+  });
+});
+
 // -- One-off helpers --
 
 describe("encodeTyped / decodeTyped", () => {

@@ -1,4 +1,11 @@
-import { CallData, type Abi as StarknetAbi, type RawArgs } from "starknet";
+import {
+  CallData,
+  CairoOption,
+  CairoCustomEnum,
+  CairoResult,
+  type Abi as StarknetAbi,
+  type RawArgs,
+} from "starknet";
 import type {
   Abi,
   ExtractAbiStructNames,
@@ -113,49 +120,107 @@ function toChecksumAddress(value: bigint | string | number): string {
   return "0x" + BigInt(value).toString(16).padStart(64, "0");
 }
 
+type TypeInfo =
+  | { kind: "struct"; members: Map<string, string> }
+  | { kind: "enum"; variants: Map<string, string> };
+
 /**
- * Build a lookup of struct/enum member types from the ABI.
- * Returns a map: typeName -> { memberName -> cairoType }
+ * Build a lookup of struct and enum member/variant types from the ABI.
  */
-function buildTypeMap(abi: StarknetAbi): Map<string, Map<string, string>> {
-  const typeMap = new Map<string, Map<string, string>>();
+function buildTypeMap(abi: StarknetAbi): Map<string, TypeInfo> {
+  const typeMap = new Map<string, TypeInfo>();
   for (const entry of abi) {
     if (entry.type === "struct" && "members" in entry) {
       const members = new Map<string, string>();
       for (const m of entry.members) {
         members.set(m.name, m.type);
       }
-      typeMap.set(entry.name, members);
+      typeMap.set(entry.name, { kind: "struct", members });
+    } else if (entry.type === "enum" && "variants" in entry) {
+      const variants = new Map<string, string>();
+      for (const v of entry.variants) {
+        variants.set(v.name, v.type);
+      }
+      typeMap.set(entry.name, { kind: "enum", variants });
     }
   }
   return typeMap;
 }
 
+const OPTION_RE = /^core::option::Option::<(.+)>$/;
+const RESULT_RE = /^core::result::Result::<(.+),\s*(.+)>$/;
+const ARRAY_RE = /^core::array::(?:Array|Span)::<(.+)>$/;
+
+function extractInnerType(cairoType: string): { wrapper: string; inner: string[] } | null {
+  let m = OPTION_RE.exec(cairoType);
+  if (m) return { wrapper: "option", inner: [m[1]] };
+  m = RESULT_RE.exec(cairoType);
+  if (m) return { wrapper: "result", inner: [m[1], m[2]] };
+  m = ARRAY_RE.exec(cairoType);
+  if (m) return { wrapper: "array", inner: [m[1]] };
+  return null;
+}
+
 /**
- * Recursively walk a decoded struct and transform address fields
+ * Recursively walk a decoded value and transform address fields
  * from bigint/number to 0x-prefixed, zero-padded hex strings.
+ * Handles structs, Options, Results, CustomEnums, and arrays.
  */
 function transformAddresses(
   value: unknown,
   cairoType: string,
-  typeMap: Map<string, Map<string, string>>
+  typeMap: Map<string, TypeInfo>
 ): unknown {
+  // Direct address type
   if (ADDRESS_TYPES.has(cairoType)) {
     return toChecksumAddress(value as bigint | string | number);
   }
-  const members = typeMap.get(cairoType);
-  if (members && typeof value === "object" && value !== null) {
+
+  // Generic wrappers: Option<T>, Result<T,E>, Array<T>
+  const generic = extractInnerType(cairoType);
+  if (generic) {
+    if (generic.wrapper === "option" && value instanceof CairoOption) {
+      if (value.isNone()) return value;
+      const inner = transformAddresses(value.unwrap(), generic.inner[0], typeMap);
+      return new CairoOption(0, inner); // 0 = Some
+    }
+    if (generic.wrapper === "result" && value instanceof CairoResult) {
+      if (value.isOk()) {
+        const inner = transformAddresses(value.unwrap(), generic.inner[0], typeMap);
+        return new CairoResult(0, inner); // 0 = Ok
+      }
+      const inner = transformAddresses(value.unwrap(), generic.inner[1], typeMap);
+      return new CairoResult(1, inner); // 1 = Err
+    }
+    if (generic.wrapper === "array" && Array.isArray(value)) {
+      return value.map((el) => transformAddresses(el, generic.inner[0], typeMap));
+    }
+  }
+
+  const info = typeMap.get(cairoType);
+  if (!info || typeof value !== "object" || value === null) return value;
+
+  // Struct: transform each member
+  if (info.kind === "struct") {
     const result: Record<string, unknown> = {};
     for (const [key, val] of Object.entries(value as Record<string, unknown>)) {
-      const memberType = members.get(key);
-      if (memberType) {
-        result[key] = transformAddresses(val, memberType, typeMap);
-      } else {
-        result[key] = val;
-      }
+      const memberType = info.members.get(key);
+      result[key] = memberType ? transformAddresses(val, memberType, typeMap) : val;
     }
     return result;
   }
+
+  // Custom enum (CairoCustomEnum): transform the active variant's data
+  if (info.kind === "enum" && value instanceof CairoCustomEnum) {
+    const active = value.activeVariant();
+    const variantType = info.variants.get(active);
+    if (variantType && variantType !== "()") {
+      const transformed = transformAddresses(value.unwrap(), variantType, typeMap);
+      return new CairoCustomEnum({ [active]: transformed });
+    }
+    return value;
+  }
+
   return value;
 }
 
