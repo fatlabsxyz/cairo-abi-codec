@@ -63,12 +63,6 @@ export type AbiType<
   TName extends ExtractAbiTypeNames<TAbi>,
 > = StringToPrimitiveType<TAbi, TName>;
 
-/** @deprecated Use `AbiType` instead. */
-export type StructType<
-  TAbi extends Abi,
-  TStructName extends ExtractAbiStructNames<TAbi>,
-> = StringToPrimitiveType<TAbi, TStructName>;
-
 // ============================================================================
 // Internal Helpers
 // ============================================================================
@@ -285,9 +279,3 @@ export function decodeTyped<
   return createTypedCodec(abi).decode(typeName, calldata);
 }
 
-/** @deprecated Use `createTypedCodec` instead. */
-export const createTypedEncoder = createTypedCodec;
-/** @deprecated Use `encodeTyped` instead. */
-export const encodeStructTyped = encodeTyped;
-/** @deprecated Use `decodeTyped` instead. */
-export const decodeStructTyped = decodeTyped;

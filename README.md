@@ -1,20 +1,19 @@
-# starknet-structure-encoding
+# @fatsolutions/cairo-abi-codec
 
-Type-safe encoding of arbitrary Cairo structs to calldata using starknet.js.
+Type-safe encode/decode for Cairo structs and enums to Starknet calldata.
 
 ## Installation
 
 ```bash
-pnpm add starknet-structure-encoding
+pnpm add @fatsolutions/cairo-abi-codec
 ```
 
 ## Quick Start
 
 ```typescript
-import { CairoOption, CairoOptionVariant } from "starknet";
-import { createTypedEncoder, StructType } from "starknet-structure-encoding";
+import { CairoOption, CairoOptionVariant, CairoCustomEnum } from "starknet";
+import { createTypedCodec, type AbiType } from "@fatsolutions/cairo-abi-codec";
 
-// Define your ABI as const (required for type inference)
 const abi = [
   {
     type: "struct",
@@ -26,35 +25,22 @@ const abi = [
   },
 ] as const;
 
-// Create encoder - struct names are autocompleted!
-const encoder = createTypedEncoder(abi);
+const codec = createTypedCodec(abi);
 
-// Type is inferred from the ABI
-type MyStruct = StructType<typeof abi, "MyStruct">;
+// Struct names are autocompleted, data is type-checked against the ABI
+type MyStruct = AbiType<typeof abi, "MyStruct">;
 
 const data: MyStruct = { id: 1n, value: 42n };
-const encoded = encoder.encode("MyStruct", data);
-// Result: ['1', '42']
+const encoded = codec.encode("MyStruct", data);
+// => ['1', '42']
+
+const decoded = codec.decode("MyStruct", encoded);
+// => { id: 1n, value: 42n }
 ```
 
-## Type Safety
+## Structs with Options
 
-The encoder provides full type safety:
-
-```typescript
-// Struct names are autocompleted from the ABI
-encoder.encode("MyStruct", data);     // OK
-encoder.encode("InvalidName", data);  // Compile error
-
-// Data is type-checked against the ABI
-encoder.encode("MyStruct", { id: 1n, value: 42n });        // OK
-encoder.encode("MyStruct", { id: 1n });                    // Error: missing 'value'
-encoder.encode("MyStruct", { id: "wrong", value: 42n });   // Error: wrong type
-```
-
-## Handling Option Types
-
-Use `Option::<T>` syntax (with `::`) and include enum definitions:
+Include the `Option` enum definition in your ABI:
 
 ```typescript
 const abi = [
@@ -76,128 +62,96 @@ const abi = [
   },
 ] as const;
 
-// Type includes CairoOption
-type MyStruct = StructType<typeof abi, "MyStruct">;
-// = { id: bigint; maybe_value: CairoOption<bigint> }
+const codec = createTypedCodec(abi);
 
-const data: MyStruct = {
+// AbiType infers: { id: bigint; maybe_value: CairoOption<bigint> }
+const data = {
   id: 1n,
   maybe_value: new CairoOption(CairoOptionVariant.Some, 42n),
 };
 
-const encoder = createTypedEncoder(abi);
-encoder.encode("MyStruct", data);
-// Result: ['1', '0', '42']
+codec.encode("MyStruct", data);
+// => ['1', '0', '42']
 ```
 
-## Complete Example with Nested Options
+## Enums
+
+Custom enums encode/decode as `CairoCustomEnum`:
 
 ```typescript
-import { CairoOption, CairoOptionVariant } from "starknet";
-import { createTypedEncoder, StructType } from "starknet-structure-encoding";
-
 const abi = [
   {
-    type: "struct",
-    name: "InnerStruct",
-    members: [
-      { name: "value", type: "core::integer::u64" },
-      { name: "maybe_number", type: "core::option::Option::<core::integer::u64>" },
-    ],
-  },
-  {
-    type: "struct",
-    name: "MyStruct",
-    members: [
-      { name: "id", type: "core::integer::u64" },
-      { name: "maybe_inner", type: "core::option::Option::<InnerStruct>" },
-    ],
-  },
-  {
     type: "enum",
-    name: "core::option::Option::<core::integer::u64>",
+    name: "Action",
     variants: [
-      { name: "Some", type: "core::integer::u64" },
-      { name: "None", type: "()" },
-    ],
-  },
-  {
-    type: "enum",
-    name: "core::option::Option::<InnerStruct>",
-    variants: [
-      { name: "Some", type: "InnerStruct" },
-      { name: "None", type: "()" },
+      { name: "Move", type: "core::integer::u64" },
+      { name: "Stop", type: "()" },
     ],
   },
 ] as const;
 
-type InnerStruct = StructType<typeof abi, "InnerStruct">;
-type MyStruct = StructType<typeof abi, "MyStruct">;
+const codec = createTypedCodec(abi);
 
-const inner: InnerStruct = {
-  value: 100n,
-  maybe_number: new CairoOption(CairoOptionVariant.Some, 42n),
-};
+const encoded = codec.encode("Action", new CairoCustomEnum({ Move: 42n }));
+// => ['0', '42']
 
-const myStruct: MyStruct = {
-  id: 1n,
-  maybe_inner: new CairoOption(CairoOptionVariant.Some, inner),
-};
+const decoded = codec.decode("Action", encoded);
+decoded.activeVariant(); // => 'Move'
+decoded.unwrap();        // => 42n
+```
 
-const encoder = createTypedEncoder(abi);
-const encoded = encoder.encode("MyStruct", myStruct);
-// Result: ['1', '0', '100', '0', '42']
-//          id   Some value  Some 42
+## ContractAddress
+
+Decoded `ContractAddress` fields are automatically formatted as `0x`-prefixed, zero-padded 64-char hex strings. This applies in all positions: top-level struct members, nested structs, Options, Arrays, and custom enum variants.
+
+```typescript
+const decoded = codec.decode("Transfer", calldata);
+decoded.sender; // => '0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7'
+```
+
+## ABI Narrowing
+
+Use `narrowAbi` to filter a full contract ABI down to specific types, preserving type information:
+
+```typescript
+import { narrowAbi, createTypedCodec } from "@fatsolutions/cairo-abi-codec";
+
+const subset = narrowAbi(fullContractAbi, ["MyStruct", "MyEnum"] as const);
+const codec = createTypedCodec(subset);
 ```
 
 ## API
 
-### `createTypedEncoder(abi)`
+### `createTypedCodec(abi)`
 
-Creates a reusable encoder for the given ABI. Best for encoding multiple structs.
+Creates a reusable codec with `encode` and `decode` methods. Best when encoding/decoding multiple types from the same ABI.
 
-```typescript
-const encoder = createTypedEncoder(abi);
-encoder.encode("StructName", data);
-```
+### `encodeTyped(abi, typeName, data)`
 
-### `encodeStructTyped(abi, structName, data)`
+One-off encoding. Creates the codec internally.
 
-One-off encoding. Creates the encoder internally each time.
+### `decodeTyped(abi, typeName, calldata)`
 
-```typescript
-import { encodeStructTyped } from "starknet-structure-encoding";
+One-off decoding. Creates the codec internally.
 
-const encoded = encodeStructTyped(abi, "MyStruct", data);
-```
+### `AbiType<TAbi, TName>`
 
-### `StructType<TAbi, TStructName>`
+Type utility to extract the TypeScript type for a struct or enum from the ABI.
 
-Type utility to extract the TypeScript type for a struct from the ABI.
+### `narrowAbi(abi, names)`
 
-```typescript
-type MyStruct = StructType<typeof abi, "MyStruct">;
-```
-
-### `ExtractAbiStructNames<TAbi>`
-
-Type utility to get a union of all struct names in the ABI.
-
-```typescript
-type Names = ExtractAbiStructNames<typeof abi>;
-// = "InnerStruct" | "MyStruct"
-```
-
-## How It Works
-
-`CallData.compile()` requires a function name, not a struct name. This library:
-
-1. Wraps your struct ABI with a dummy interface and function
-2. Uses the function to encode your struct
-3. Provides type safety via TypeScript generics (inspired by abi-wan-kanabi)
+Filters an ABI to only the named struct/enum entries, preserving the const tuple type.
 
 ## Important Notes
 
 - **Use `as const`** on your ABI for type inference to work
-- **Use `Option::<T>` syntax** (with `::`) for Option types - this is a starknet.js quirk
-- **Include enum definitions** for each Option type in your ABI
+- Integer types (`u64`, `u128`, `u256`, `felt252`) resolve to `bigint`
+- `Option<T>` resolves to `CairoOption<T>`, custom enums to `CairoCustomEnum`
+- `ContractAddress` decodes to `0x`-prefixed hex strings (64 chars, zero-padded)
+
+## Build & Test
+
+```bash
+pnpm run build    # tsc -> dist/
+pnpm test         # node:test with --experimental-strip-types
+```

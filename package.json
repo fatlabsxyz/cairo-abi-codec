@@ -3,16 +3,12 @@
   "version": "1.0.0",
   "description": "Encode arbitrary Cairo structs to calldata",
   "type": "module",
-  "main": "dist/encoder.js",
+  "main": "dist/typed-encoder.js",
   "types": "dist/typed-encoder.d.ts",
   "exports": {
     ".": {
       "types": "./dist/typed-encoder.d.ts",
       "default": "./dist/typed-encoder.js"
-    },
-    "./untyped": {
-      "types": "./dist/encoder.d.ts",
-      "default": "./dist/encoder.js"
     }
   },
   "files": ["dist"],
