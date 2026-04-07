@@ -2,6 +2,14 @@
   "name": "@fatsolutions/cairo-abi-codec",
   "version": "0.0.1",
   "description": "Encode/decode arbitrary Cairo structs to calldata",
+  "repository": {
+    "type": "git",
+    "url": "git+https://github.com/fatlabsxyz/cairo-abi-codec.git"
+  },
+  "publishConfig": {
+    "access": "public",
+    "registry": "https://registry.npmjs.org"
+  },
   "type": "module",
   "main": "dist/typed-encoder.js",
   "types": "dist/typed-encoder.d.ts",
