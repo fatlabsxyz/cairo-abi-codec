@@ -13,7 +13,7 @@ concurrency:
 jobs:
   verify:
     name: Verify
-    uses: ./.github/verify.yml
+    uses: ./.github/workflows/verify.yml
     secrets: inherit
     permissions:
       contents: read
