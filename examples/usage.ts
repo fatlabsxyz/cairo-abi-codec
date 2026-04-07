@@ -1,10 +1,9 @@
 import { CairoOption, CairoOptionVariant } from "starknet";
 import {
   createTypedCodec,
-  encodeStructTyped,
-  decodeStructTyped,
-  type StructType,
-  type ExtractAbiStructNames,
+  encodeTyped,
+  decodeTyped,
+  type AbiType,
 } from "../src/typed-encoder.ts";
 
 // Define the ABI as const to preserve literal types
@@ -44,12 +43,8 @@ const structAbi = [
 ] as const;
 
 // Type is inferred from the ABI!
-type MyStruct = StructType<typeof structAbi, "MyStruct">;
-type InnerStruct = StructType<typeof structAbi, "InnerStruct">;
-
-// Show available struct names (for demonstration)
-type AvailableStructs = ExtractAbiStructNames<typeof structAbi>;
-// = "InnerStruct" | "MyStruct"
+type MyStruct = AbiType<typeof structAbi, "MyStruct">;
+type InnerStruct = AbiType<typeof structAbi, "InnerStruct">;
 
 // Example data - TypeScript will verify this matches the ABI
 const inner: InnerStruct = {
@@ -99,12 +94,12 @@ console.log("  maybe_inner is None?", decoded2.maybe_inner.isNone());
 // === Roundtrip ===
 console.log("\n=== Roundtrip ===");
 const roundtripped = codec.decode("MyStruct", codec.encode("MyStruct", myStruct));
-console.log("Original id:", myStruct.id, "→ Roundtripped id:", roundtripped.id);
+console.log("Original id:", myStruct.id, "-> Roundtripped id:", roundtripped.id);
 
 // === One-off helpers ===
 console.log("\n=== One-off helpers ===");
-const oneOffEncoded = encodeStructTyped(structAbi, "MyStruct", myStruct);
+const oneOffEncoded = encodeTyped(structAbi, "MyStruct", myStruct);
 console.log("One-off encoded:", oneOffEncoded);
 
-const oneOffDecoded = decodeStructTyped(structAbi, "MyStruct", oneOffEncoded);
+const oneOffDecoded = decodeTyped(structAbi, "MyStruct", oneOffEncoded);
 console.log("One-off decoded id:", oneOffDecoded.id);
