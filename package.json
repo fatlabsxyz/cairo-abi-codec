@@ -1,6 +1,6 @@
 {
   "name": "@fatsolutions/cairo-abi-codec",
-  "version": "1.0.0",
+  "version": "0.0.1",
   "description": "Encode/decode arbitrary Cairo structs to calldata",
   "type": "module",
   "main": "dist/typed-encoder.js",
