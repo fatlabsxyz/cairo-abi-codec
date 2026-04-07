@@ -1,0 +1,46 @@
+name: 'Setup Workspace'
+description: 'Sets up Node.js, pnpm, and builds packages'
+
+inputs:
+  build-packages:
+    description: 'Whether to build packages'
+    required: false
+    default: 'true'
+
+runs:
+  using: 'composite'
+  steps:
+    - name: Setup Node.js
+      uses: actions/setup-node@v4
+      with:
+        node-version: '24'
+
+    - name: Setup pnpm
+      uses: pnpm/action-setup@v4
+      with:
+        version: '10.32.1'
+
+    - name: Get pnpm store directory
+      shell: bash
+      run: |
+        echo "STORE_PATH=$(pnpm store path --silent)" >> $GITHUB_ENV
+
+    - name: Cache pnpm store
+      uses: actions/cache@v4
+      with:
+        path: ${{ env.STORE_PATH }}
+        key: ${{ runner.os }}-pnpm-store-${{ hashFiles('**/pnpm-lock.yaml') }}
+        restore-keys: |
+          ${{ runner.os }}-pnpm-store-
+
+    - name: Install dependencies
+      shell: bash
+      run: |
+        pnpm config set auto-install-peers false
+        pnpm install --ignore-scripts
+
+    - name: Build packages
+      if: inputs.build-packages == 'true'
+      shell: bash
+      run: |
+        pnpm build
