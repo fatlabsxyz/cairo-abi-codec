@@ -5,7 +5,10 @@ import {
   createTypedCodec,
   encodeTyped,
   decodeTyped,
+  encodeConstructor,
+  decodeConstructor,
   type AbiType,
+  type ConstructorArgs,
 } from "./typed-encoder.ts";
 
 // -- Struct ABI fixtures --
@@ -386,5 +389,156 @@ describe("encodeTyped / decodeTyped", () => {
     const decoded = decodeTyped(enumAbi, "Direction", encoded);
     ok(decoded instanceof CairoCustomEnum);
     deepStrictEqual(decoded.activeVariant(), "Down");
+  });
+});
+
+// -- Constructor ABI fixtures --
+
+const constructorAbi = [
+  {
+    type: "constructor",
+    name: "constructor",
+    inputs: [
+      { name: "owner", type: "core::starknet::contract_address::ContractAddress" },
+      { name: "initial_supply", type: "core::integer::u64" },
+    ],
+  },
+] as const;
+
+const constructorWithStructAbi = [
+  {
+    type: "struct",
+    name: "Config",
+    members: [
+      { name: "admin", type: "core::starknet::contract_address::ContractAddress" },
+      { name: "threshold", type: "core::integer::u64" },
+    ],
+  },
+  {
+    type: "constructor",
+    name: "constructor",
+    inputs: [
+      { name: "owner", type: "core::starknet::contract_address::ContractAddress" },
+      { name: "config", type: "Config" },
+    ],
+  },
+] as const;
+
+const noConstructorAbi = [
+  {
+    type: "struct",
+    name: "Simple",
+    members: [{ name: "value", type: "core::integer::u64" }],
+  },
+] as const;
+
+// -- Constructor tests --
+
+describe("createTypedCodec (constructor)", () => {
+  const codec = createTypedCodec(constructorAbi);
+
+  it("encodes constructor args", () => {
+    const result = codec.encodeConstructor({
+      owner: ADDR_A,
+      initial_supply: 1000n,
+    });
+    deepStrictEqual(result[0], BigInt(ADDR_A).toString());
+    deepStrictEqual(result[1], "1000");
+  });
+
+  it("decodes constructor calldata", () => {
+    const encoded = codec.encodeConstructor({
+      owner: ADDR_A,
+      initial_supply: 1000n,
+    });
+    const decoded = codec.decodeConstructor(encoded);
+    deepStrictEqual(decoded.owner, ADDR_A);
+    deepStrictEqual(decoded.initial_supply, 1000n);
+  });
+
+  it("roundtrips constructor encode → decode", () => {
+    const data: ConstructorArgs<typeof constructorAbi> = {
+      owner: ADDR_B,
+      initial_supply: 42n,
+    };
+    const encoded = codec.encodeConstructor(data);
+    const decoded = codec.decodeConstructor(encoded);
+    deepStrictEqual(decoded.owner, ADDR_B);
+    deepStrictEqual(decoded.initial_supply, 42n);
+  });
+});
+
+describe("createTypedCodec (constructor with struct)", () => {
+  const codec = createTypedCodec(constructorWithStructAbi);
+
+  it("encodes constructor with nested struct", () => {
+    const result = codec.encodeConstructor({
+      owner: ADDR_A,
+      config: { admin: ADDR_B, threshold: 5n },
+    });
+    deepStrictEqual(result[0], BigInt(ADDR_A).toString());
+    deepStrictEqual(result[1], BigInt(ADDR_B).toString());
+    deepStrictEqual(result[2], "5");
+  });
+
+  it("decodes constructor with nested struct and address transformation", () => {
+    const encoded = codec.encodeConstructor({
+      owner: ADDR_A,
+      config: { admin: ADDR_B, threshold: 5n },
+    });
+    const decoded = codec.decodeConstructor(encoded);
+    deepStrictEqual(decoded.owner, ADDR_A);
+    deepStrictEqual(decoded.config.admin, ADDR_B);
+    deepStrictEqual(decoded.config.threshold, 5n);
+  });
+});
+
+describe("createTypedCodec (no constructor)", () => {
+  const codec = createTypedCodec(noConstructorAbi);
+
+  it("throws on encodeConstructor when ABI has no constructor", () => {
+    let threw = false;
+    try {
+      codec.encodeConstructor({} as any);
+    } catch (e: any) {
+      threw = true;
+      ok(e.message.includes("does not contain a constructor"));
+    }
+    ok(threw, "expected encodeConstructor to throw");
+  });
+
+  it("throws on decodeConstructor when ABI has no constructor", () => {
+    let threw = false;
+    try {
+      codec.decodeConstructor(["1"]);
+    } catch (e: any) {
+      threw = true;
+      ok(e.message.includes("does not contain a constructor"));
+    }
+    ok(threw, "expected decodeConstructor to throw");
+  });
+});
+
+describe("encodeConstructor / decodeConstructor one-off helpers", () => {
+  it("one-off matches codec output", () => {
+    const data: ConstructorArgs<typeof constructorAbi> = {
+      owner: ADDR_A,
+      initial_supply: 500n,
+    };
+    const codec = createTypedCodec(constructorAbi);
+    const fromCodec = codec.encodeConstructor(data);
+    const fromOneOff = encodeConstructor(constructorAbi, data);
+    deepStrictEqual(fromOneOff, fromCodec);
+  });
+
+  it("one-off decode roundtrips", () => {
+    const data: ConstructorArgs<typeof constructorAbi> = {
+      owner: ADDR_B,
+      initial_supply: 99n,
+    };
+    const encoded = encodeConstructor(constructorAbi, data);
+    const decoded = decodeConstructor(constructorAbi, encoded);
+    deepStrictEqual(decoded.owner, ADDR_B);
+    deepStrictEqual(decoded.initial_supply, 99n);
   });
 });
