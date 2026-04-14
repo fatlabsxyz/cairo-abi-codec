@@ -1,5 +1,11 @@
 # @fatsolutions/cairo-abi-codec
 
+## 0.0.4
+
+### Patch Changes
+
+- 86a2911: Added support for encoding/decoding struct events
+
 ## 0.0.3
 
 ### Patch Changes
