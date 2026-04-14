@@ -1,5 +1,11 @@
 # @fatsolutions/cairo-abi-codec
 
+## 0.0.3
+
+### Patch Changes
+
+- 3116aae: Added support for constructor encoding
+
 ## 0.0.2
 
 ### Patch Changes
