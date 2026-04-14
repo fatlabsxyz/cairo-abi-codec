@@ -1,6 +1,6 @@
 {
   "name": "@fatsolutions/cairo-abi-codec",
-  "version": "0.0.4",
+  "version": "0.1.0",
   "description": "Encode/decode arbitrary Cairo structs to calldata",
   "repository": {
     "type": "git",
