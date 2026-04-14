@@ -1,6 +1,6 @@
 # @fatsolutions/cairo-abi-codec
 
-Type-safe encode/decode for Cairo structs and enums to Starknet calldata.
+Type-safe encode/decode for Cairo structs, enums, constructors, and events to Starknet calldata.
 
 ## Installation
 
@@ -100,6 +100,72 @@ decoded.activeVariant(); // => 'Move'
 decoded.unwrap();        // => 42n
 ```
 
+## Constructors
+
+Encode/decode constructor calldata for deploy transactions:
+
+```typescript
+const abi = [
+  {
+    type: "constructor",
+    name: "constructor",
+    inputs: [
+      { name: "owner", type: "core::starknet::contract_address::ContractAddress" },
+      { name: "initial_supply", type: "core::integer::u64" },
+    ],
+  },
+] as const;
+
+const codec = createTypedCodec(abi);
+
+const encoded = codec.encodeConstructor({
+  owner: "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7",
+  initial_supply: 1000n,
+});
+
+const decoded = codec.decodeConstructor(encoded);
+// => { owner: '0x049d...dc7', initial_supply: 1000n }
+```
+
+The constructor can reference struct/enum types defined in the same ABI.
+
+## Events
+
+Decode events from transaction receipts. Event members are split by `kind`: `"key"` members come from the keys array, `"data"` members from the data array.
+
+```typescript
+const abi = [
+  {
+    type: "event",
+    name: "Transfer",
+    kind: "struct",
+    members: [
+      { name: "from", type: "core::starknet::contract_address::ContractAddress", kind: "key" },
+      { name: "to", type: "core::starknet::contract_address::ContractAddress", kind: "key" },
+      { name: "amount", type: "core::integer::u64", kind: "data" },
+    ],
+  },
+] as const;
+
+const codec = createTypedCodec(abi);
+
+// Decoding from a transaction receipt — strip the selector (keys[0]) first:
+const decoded = codec.decodeEvent("Transfer", {
+  keys: receipt.events[0].keys.slice(1),  // skip selector
+  data: receipt.events[0].data,
+});
+// => { from: '0x049d...dc7', to: '0x000...001', amount: 500n }
+
+// Encoding (for testing) — returns { keys, data } without selector
+const encoded = codec.encodeEvent("Transfer", {
+  from: "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7",
+  to: "0x0000000000000000000000000000000000000000000000000000000000000001",
+  amount: 500n,
+});
+```
+
+Only `kind: "struct"` events are supported. Enum events (`kind: "enum"`) are Cairo's internal dispatch pattern and don't need off-chain handling.
+
 ## ContractAddress
 
 Decoded `ContractAddress` fields are automatically formatted as `0x`-prefixed, zero-padded 64-char hex strings. This applies in all positions: top-level struct members, nested structs, Options, Arrays, and custom enum variants.
@@ -124,19 +190,38 @@ const codec = createTypedCodec(subset);
 
 ### `createTypedCodec(abi)`
 
-Creates a reusable codec with `encode` and `decode` methods. Best when encoding/decoding multiple types from the same ABI.
+Creates a reusable codec with the following methods:
 
-### `encodeTyped(abi, typeName, data)`
+| Method | Description |
+|---|---|
+| `encode(typeName, data)` | Encode a struct or enum to calldata |
+| `decode(typeName, calldata)` | Decode calldata to a struct or enum |
+| `encodeConstructor(data)` | Encode constructor arguments to calldata |
+| `decodeConstructor(calldata)` | Decode constructor calldata |
+| `encodeEvent(eventName, data)` | Encode event data to `{ keys, data }` |
+| `decodeEvent(eventName, { keys, data })` | Decode event keys/data to a typed object |
 
-One-off encoding. Creates the codec internally.
+### One-off helpers
 
-### `decodeTyped(abi, typeName, calldata)`
+| Function | Description |
+|---|---|
+| `encodeTyped(abi, typeName, data)` | One-off struct/enum encoding |
+| `decodeTyped(abi, typeName, calldata)` | One-off struct/enum decoding |
+| `encodeConstructor(abi, data)` | One-off constructor encoding |
+| `decodeConstructor(abi, calldata)` | One-off constructor decoding |
+| `encodeEvent(abi, eventName, data)` | One-off event encoding |
+| `decodeEvent(abi, eventName, event)` | One-off event decoding |
 
-One-off decoding. Creates the codec internally.
+### Type utilities
 
-### `AbiType<TAbi, TName>`
-
-Type utility to extract the TypeScript type for a struct or enum from the ABI.
+| Type | Description |
+|---|---|
+| `AbiType<TAbi, TName>` | TypeScript type for a struct or enum |
+| `ConstructorArgs<TAbi>` | Typed object for constructor inputs |
+| `AbiEventType<TAbi, TName>` | Typed object for event members |
+| `ExtractAbiTypeNames<TAbi>` | Union of all struct/enum names |
+| `ExtractAbiConstructor<TAbi>` | Constructor entry from the ABI |
+| `ExtractAbiEventNames<TAbi>` | Union of all event names |
 
 ### `narrowAbi(abi, names)`
 
@@ -148,6 +233,8 @@ Filters an ABI to only the named struct/enum entries, preserving the const tuple
 - Integer types (`u64`, `u128`, `u256`, `felt252`) resolve to `bigint`
 - `Option<T>` resolves to `CairoOption<T>`, custom enums to `CairoCustomEnum`
 - `ContractAddress` decodes to `0x`-prefixed hex strings (64 chars, zero-padded)
+- Constructor ABIs use `inputs` (not `members`) — the codec handles this automatically
+- Event `decodeEvent` expects keys **without** the selector — strip `keys[0]` from receipt data
 
 ## Build & Test
 

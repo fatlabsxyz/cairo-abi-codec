@@ -3,7 +3,10 @@ import {
   createTypedCodec,
   encodeTyped,
   decodeTyped,
+  encodeConstructor,
   type AbiType,
+  type ConstructorArgs,
+  type AbiEventType,
 } from "../src/typed-encoder.ts";
 
 // Define the ABI as const to preserve literal types
@@ -103,3 +106,85 @@ console.log("One-off encoded:", oneOffEncoded);
 
 const oneOffDecoded = decodeTyped(structAbi, "MyStruct", oneOffEncoded);
 console.log("One-off decoded id:", oneOffDecoded.id);
+
+// ============================================================================
+// Constructor encoding/decoding
+// ============================================================================
+
+const tokenAbi = [
+  {
+    type: "constructor",
+    name: "constructor",
+    inputs: [
+      { name: "owner", type: "core::starknet::contract_address::ContractAddress" },
+      { name: "initial_supply", type: "core::integer::u64" },
+    ],
+  },
+] as const;
+
+console.log("\n=== Constructor ===");
+
+const tokenCodec = createTypedCodec(tokenAbi);
+
+// Type is inferred from the constructor inputs
+type TokenConstructorArgs = ConstructorArgs<typeof tokenAbi>;
+
+const ctorArgs: TokenConstructorArgs = {
+  owner: "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7",
+  initial_supply: 1000n,
+};
+
+const ctorEncoded = tokenCodec.encodeConstructor(ctorArgs);
+console.log("Constructor encoded:", ctorEncoded);
+
+const ctorDecoded = tokenCodec.decodeConstructor(ctorEncoded);
+console.log("Constructor decoded:", ctorDecoded);
+
+// One-off helper
+const ctorOneOff = encodeConstructor(tokenAbi, ctorArgs);
+console.log("Constructor one-off:", ctorOneOff);
+
+// ============================================================================
+// Event encoding/decoding
+// ============================================================================
+
+const eventAbi = [
+  {
+    type: "event",
+    name: "Transfer",
+    kind: "struct",
+    members: [
+      { name: "from", type: "core::starknet::contract_address::ContractAddress", kind: "key" },
+      { name: "to", type: "core::starknet::contract_address::ContractAddress", kind: "key" },
+      { name: "amount", type: "core::integer::u64", kind: "data" },
+    ],
+  },
+] as const;
+
+console.log("\n=== Events ===");
+
+const eventCodec = createTypedCodec(eventAbi);
+
+// Type is inferred from the event members
+type TransferEvent = AbiEventType<typeof eventAbi, "Transfer">;
+
+const transferData: TransferEvent = {
+  from: "0x049d36570d4e46f48e99674bd3fcc84644ddd6b96f7c741b1562b82f9e004dc7",
+  to: "0x0000000000000000000000000000000000000000000000000000000000000001",
+  amount: 500n,
+};
+
+// Encode splits into keys (key members) and data (data members)
+const eventEncoded = eventCodec.encodeEvent("Transfer", transferData);
+console.log("Event keys:", eventEncoded.keys);   // [from, to] as decimal felts
+console.log("Event data:", eventEncoded.data);   // [amount]
+
+// Decode merges keys + data back into a typed object
+const eventDecoded = eventCodec.decodeEvent("Transfer", eventEncoded);
+console.log("Event decoded:", eventDecoded);
+
+// When decoding from a transaction receipt, strip the selector (keys[0]) first:
+// const decoded = eventCodec.decodeEvent("Transfer", {
+//   keys: receipt.events[0].keys.slice(1),  // skip selector
+//   data: receipt.events[0].data,
+// });
