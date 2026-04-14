@@ -17,6 +17,22 @@ import type {
 export type { Abi, ExtractAbiStructNames, ExtractAbiEnumNames } from "abi-wan-kanabi/kanabi";
 
 // ============================================================================
+// Constructor Type Utilities
+// ============================================================================
+
+/** Extracts the constructor entry from an ABI. */
+export type ExtractAbiConstructor<TAbi extends Abi> =
+  Extract<TAbi[number], { type: "constructor" }>;
+
+/** Typed object for constructor arguments, keyed by input name. */
+export type ConstructorArgs<TAbi extends Abi> = {
+  [K in ExtractAbiConstructor<TAbi>["inputs"][number] as K["name"]]: StringToPrimitiveType<
+    TAbi,
+    K["type"]
+  >;
+};
+
+// ============================================================================
 // Public Type Utilities
 // ============================================================================
 
@@ -237,6 +253,31 @@ export function createTypedCodec<TAbi extends Abi>(abi: TAbi) {
   const wrappedAbi = buildWrappedAbi(abi);
   const typeMap = buildTypeMap(abi as unknown as StarknetAbi);
 
+  // Precompute constructor codec if the ABI has a constructor
+  const constructorEntry = (abi as readonly any[]).find(
+    (e: any) => e.type === "constructor"
+  );
+  let constructorCallData: CallData | undefined;
+  let constructorTypeMap: Map<string, TypeInfo> | undefined;
+  if (constructorEntry) {
+    const syntheticStruct = {
+      type: "struct" as const,
+      name: "__ConstructorArgs__",
+      members: (constructorEntry.inputs as readonly any[]).map((i: any) => ({
+        name: i.name,
+        type: i.type,
+      })),
+    };
+    const typeEntries = (abi as readonly any[]).filter(
+      (e: any) => e.type === "struct" || e.type === "enum"
+    );
+    const constructorAbi = [syntheticStruct, ...typeEntries];
+    const wrapped = buildWrappedAbi(constructorAbi as unknown as Abi);
+    const patched = patchAbi(wrapped, "__ConstructorArgs__");
+    constructorCallData = new CallData(patched);
+    constructorTypeMap = buildTypeMap(constructorAbi as unknown as StarknetAbi);
+  }
+
   return {
     encode<TName extends ExtractAbiTypeNames<TAbi>>(
       typeName: TName,
@@ -255,6 +296,21 @@ export function createTypedCodec<TAbi extends Abi>(abi: TAbi) {
       const callData = new CallData(patchedAbi);
       const raw = callData.parse("__codec__", calldata);
       return transformAddresses(raw, typeName, typeMap) as AbiType<TAbi, TName>;
+    },
+
+    encodeConstructor(data: ConstructorArgs<TAbi>): string[] {
+      if (!constructorCallData) {
+        throw new Error("ABI does not contain a constructor");
+      }
+      return constructorCallData.compile("__codec__", [data] as RawArgs) as string[];
+    },
+
+    decodeConstructor(calldata: string[]): ConstructorArgs<TAbi> {
+      if (!constructorCallData || !constructorTypeMap) {
+        throw new Error("ABI does not contain a constructor");
+      }
+      const raw = constructorCallData.parse("__codec__", calldata);
+      return transformAddresses(raw, "__ConstructorArgs__", constructorTypeMap) as ConstructorArgs<TAbi>;
     },
   };
 }
@@ -277,5 +333,25 @@ export function decodeTyped<
   TName extends ExtractAbiTypeNames<TAbi>,
 >(abi: TAbi, typeName: TName, calldata: string[]): AbiType<TAbi, TName> {
   return createTypedCodec(abi).decode(typeName, calldata);
+}
+
+/**
+ * One-off constructor encoding.
+ */
+export function encodeConstructor<TAbi extends Abi>(
+  abi: TAbi,
+  data: ConstructorArgs<TAbi>
+): string[] {
+  return createTypedCodec(abi).encodeConstructor(data);
+}
+
+/**
+ * One-off constructor decoding.
+ */
+export function decodeConstructor<TAbi extends Abi>(
+  abi: TAbi,
+  calldata: string[]
+): ConstructorArgs<TAbi> {
+  return createTypedCodec(abi).decodeConstructor(calldata);
 }
 
