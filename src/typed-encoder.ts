@@ -10,11 +10,13 @@ import type {
   Abi,
   ExtractAbiStructNames,
   ExtractAbiEnumNames,
+  ExtractAbiEventNames,
+  EventToPrimitiveType,
   StringToPrimitiveType,
 } from "abi-wan-kanabi/kanabi";
 
 // Re-export useful types from abi-wan-kanabi
-export type { Abi, ExtractAbiStructNames, ExtractAbiEnumNames } from "abi-wan-kanabi/kanabi";
+export type { Abi, ExtractAbiStructNames, ExtractAbiEnumNames, ExtractAbiEventNames } from "abi-wan-kanabi/kanabi";
 
 // ============================================================================
 // Constructor Type Utilities
@@ -31,6 +33,16 @@ export type ConstructorArgs<TAbi extends Abi> = {
     K["type"]
   >;
 };
+
+// ============================================================================
+// Event Type Utilities
+// ============================================================================
+
+/** Gets the TypeScript type for a struct event defined in the ABI. */
+export type AbiEventType<
+  TAbi extends Abi,
+  TName extends ExtractAbiEventNames<TAbi>,
+> = EventToPrimitiveType<TAbi, TName>;
 
 // ============================================================================
 // Public Type Utilities
@@ -234,6 +246,32 @@ function transformAddresses(
   return value;
 }
 
+/**
+ * Build a synthetic struct from arbitrary members and return
+ * a CallData instance + typeMap for encode/decode.
+ */
+function buildSyntheticCodec(
+  abi: readonly any[],
+  structName: string,
+  members: { name: string; type: string }[]
+): { callData: CallData; typeMap: Map<string, TypeInfo> } {
+  const syntheticStruct = {
+    type: "struct" as const,
+    name: structName,
+    members,
+  };
+  const typeEntries = abi.filter(
+    (e: any) => e.type === "struct" || e.type === "enum"
+  );
+  const syntheticAbi = [syntheticStruct, ...typeEntries];
+  const wrapped = buildWrappedAbi(syntheticAbi as unknown as Abi);
+  const patched = patchAbi(wrapped, structName);
+  return {
+    callData: new CallData(patched),
+    typeMap: buildTypeMap(syntheticAbi as unknown as StarknetAbi),
+  };
+}
+
 // ============================================================================
 // Type-Safe Codec
 // ============================================================================
@@ -312,6 +350,82 @@ export function createTypedCodec<TAbi extends Abi>(abi: TAbi) {
       const raw = constructorCallData.parse("__codec__", calldata);
       return transformAddresses(raw, "__ConstructorArgs__", constructorTypeMap) as ConstructorArgs<TAbi>;
     },
+
+    encodeEvent<TName extends ExtractAbiEventNames<TAbi>>(
+      eventName: TName,
+      data: AbiEventType<TAbi, TName>
+    ): { keys: string[]; data: string[] } {
+      const eventEntry = (abi as readonly any[]).find(
+        (e: any) => e.type === "event" && e.name === eventName && e.kind === "struct"
+      );
+      if (!eventEntry) {
+        throw new Error(`ABI does not contain a struct event named "${eventName}"`);
+      }
+      const members = eventEntry.members as readonly any[];
+      const keyMembers = members
+        .filter((m: any) => m.kind === "key")
+        .map((m: any) => ({ name: m.name, type: m.type }));
+      const dataMembers = members
+        .filter((m: any) => m.kind === "data")
+        .map((m: any) => ({ name: m.name, type: m.type }));
+
+      const dataObj = data as Record<string, unknown>;
+
+      let keys: string[] = [];
+      if (keyMembers.length > 0) {
+        const keysCodec = buildSyntheticCodec(abi as readonly any[], "__EventKeys__", keyMembers);
+        const keyData: Record<string, unknown> = {};
+        for (const m of keyMembers) keyData[m.name] = dataObj[m.name];
+        keys = keysCodec.callData.compile("__codec__", [keyData] as RawArgs) as string[];
+      }
+
+      let encodedData: string[] = [];
+      if (dataMembers.length > 0) {
+        const dataCodec = buildSyntheticCodec(abi as readonly any[], "__EventData__", dataMembers);
+        const dataValues: Record<string, unknown> = {};
+        for (const m of dataMembers) dataValues[m.name] = dataObj[m.name];
+        encodedData = dataCodec.callData.compile("__codec__", [dataValues] as RawArgs) as string[];
+      }
+
+      return { keys, data: encodedData };
+    },
+
+    decodeEvent<TName extends ExtractAbiEventNames<TAbi>>(
+      eventName: TName,
+      event: { keys: string[]; data: string[] }
+    ): AbiEventType<TAbi, TName> {
+      const eventEntry = (abi as readonly any[]).find(
+        (e: any) => e.type === "event" && e.name === eventName && e.kind === "struct"
+      );
+      if (!eventEntry) {
+        throw new Error(`ABI does not contain a struct event named "${eventName}"`);
+      }
+      const members = eventEntry.members as readonly any[];
+      const keyMembers = members
+        .filter((m: any) => m.kind === "key")
+        .map((m: any) => ({ name: m.name, type: m.type }));
+      const dataMembers = members
+        .filter((m: any) => m.kind === "data")
+        .map((m: any) => ({ name: m.name, type: m.type }));
+
+      let result: Record<string, unknown> = {};
+
+      if (keyMembers.length > 0) {
+        const keysCodec = buildSyntheticCodec(abi as readonly any[], "__EventKeys__", keyMembers);
+        const raw = keysCodec.callData.parse("__codec__", event.keys);
+        const transformed = transformAddresses(raw, "__EventKeys__", keysCodec.typeMap);
+        Object.assign(result, transformed as Record<string, unknown>);
+      }
+
+      if (dataMembers.length > 0) {
+        const dataCodec = buildSyntheticCodec(abi as readonly any[], "__EventData__", dataMembers);
+        const raw = dataCodec.callData.parse("__codec__", event.data);
+        const transformed = transformAddresses(raw, "__EventData__", dataCodec.typeMap);
+        Object.assign(result, transformed as Record<string, unknown>);
+      }
+
+      return result as AbiEventType<TAbi, TName>;
+    },
   };
 }
 
@@ -353,5 +467,25 @@ export function decodeConstructor<TAbi extends Abi>(
   calldata: string[]
 ): ConstructorArgs<TAbi> {
   return createTypedCodec(abi).decodeConstructor(calldata);
+}
+
+/**
+ * One-off event encoding.
+ */
+export function encodeEvent<
+  TAbi extends Abi,
+  TName extends ExtractAbiEventNames<TAbi>,
+>(abi: TAbi, eventName: TName, data: AbiEventType<TAbi, TName>): { keys: string[]; data: string[] } {
+  return createTypedCodec(abi).encodeEvent(eventName, data);
+}
+
+/**
+ * One-off event decoding.
+ */
+export function decodeEvent<
+  TAbi extends Abi,
+  TName extends ExtractAbiEventNames<TAbi>,
+>(abi: TAbi, eventName: TName, event: { keys: string[]; data: string[] }): AbiEventType<TAbi, TName> {
+  return createTypedCodec(abi).decodeEvent(eventName, event);
 }
 

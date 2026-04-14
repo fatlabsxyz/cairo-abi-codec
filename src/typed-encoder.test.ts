@@ -7,8 +7,11 @@ import {
   decodeTyped,
   encodeConstructor,
   decodeConstructor,
+  encodeEvent,
+  decodeEvent,
   type AbiType,
   type ConstructorArgs,
+  type AbiEventType,
 } from "./typed-encoder.ts";
 
 // -- Struct ABI fixtures --
@@ -540,5 +543,156 @@ describe("encodeConstructor / decodeConstructor one-off helpers", () => {
     const decoded = decodeConstructor(constructorAbi, encoded);
     deepStrictEqual(decoded.owner, ADDR_B);
     deepStrictEqual(decoded.initial_supply, 99n);
+  });
+});
+
+// -- Event ABI fixtures --
+
+const eventAbi = [
+  {
+    type: "event",
+    name: "Transfer",
+    kind: "struct",
+    members: [
+      { name: "from", type: "core::starknet::contract_address::ContractAddress", kind: "key" },
+      { name: "to", type: "core::starknet::contract_address::ContractAddress", kind: "key" },
+      { name: "amount", type: "core::integer::u64", kind: "data" },
+    ],
+  },
+] as const;
+
+const eventWithStructAbi = [
+  {
+    type: "struct",
+    name: "PubKey",
+    members: [
+      { name: "x", type: "core::integer::u128" },
+      { name: "y", type: "core::integer::u128" },
+    ],
+  },
+  {
+    type: "event",
+    name: "Deployed",
+    kind: "struct",
+    members: [
+      { name: "tag", type: "core::felt252", kind: "key" },
+      { name: "address", type: "core::starknet::contract_address::ContractAddress", kind: "data" },
+      { name: "rate", type: "core::integer::u64", kind: "data" },
+    ],
+  },
+] as const;
+
+const dataOnlyEventAbi = [
+  {
+    type: "event",
+    name: "Log",
+    kind: "struct",
+    members: [
+      { name: "value", type: "core::integer::u64", kind: "data" },
+      { name: "flag", type: "core::bool", kind: "data" },
+    ],
+  },
+] as const;
+
+// -- Event tests --
+
+describe("createTypedCodec (events)", () => {
+  const codec = createTypedCodec(eventAbi);
+
+  it("encodes event into keys and data", () => {
+    const result = codec.encodeEvent("Transfer", {
+      from: ADDR_A,
+      to: ADDR_B,
+      amount: 500n,
+    });
+    deepStrictEqual(result.keys[0], BigInt(ADDR_A).toString());
+    deepStrictEqual(result.keys[1], BigInt(ADDR_B).toString());
+    deepStrictEqual(result.data, ["500"]);
+  });
+
+  it("decodes event from keys and data with address transformation", () => {
+    const encoded = codec.encodeEvent("Transfer", {
+      from: ADDR_A,
+      to: ADDR_B,
+      amount: 500n,
+    });
+    const decoded = codec.decodeEvent("Transfer", encoded);
+    deepStrictEqual(decoded.from, ADDR_A);
+    deepStrictEqual(decoded.to, ADDR_B);
+    deepStrictEqual(decoded.amount, 500n);
+  });
+
+  it("roundtrips event encode → decode", () => {
+    const data: AbiEventType<typeof eventAbi, "Transfer"> = {
+      from: ADDR_B,
+      to: ADDR_A,
+      amount: 42n,
+    };
+    const encoded = codec.encodeEvent("Transfer", data);
+    const decoded = codec.decodeEvent("Transfer", encoded);
+    deepStrictEqual(decoded.from, ADDR_B);
+    deepStrictEqual(decoded.to, ADDR_A);
+    deepStrictEqual(decoded.amount, 42n);
+  });
+});
+
+describe("createTypedCodec (event with struct in data)", () => {
+  const codec = createTypedCodec(eventWithStructAbi);
+
+  it("encodes and decodes event with address in data", () => {
+    const data = { tag: 123n, address: ADDR_A, rate: 10n };
+    const encoded = codec.encodeEvent("Deployed", data);
+    // tag is a key
+    deepStrictEqual(encoded.keys, ["123"]);
+    // address + rate are data
+    deepStrictEqual(encoded.data[0], BigInt(ADDR_A).toString());
+    deepStrictEqual(encoded.data[1], "10");
+
+    const decoded = codec.decodeEvent("Deployed", encoded);
+    deepStrictEqual(decoded.tag, 123n);
+    deepStrictEqual(decoded.address, ADDR_A);
+    deepStrictEqual(decoded.rate, 10n);
+  });
+});
+
+describe("createTypedCodec (data-only event)", () => {
+  const codec = createTypedCodec(dataOnlyEventAbi);
+
+  it("handles event with no key members", () => {
+    const data = { value: 99n, flag: true };
+    const encoded = codec.encodeEvent("Log", data);
+    deepStrictEqual(encoded.keys, []);
+    deepStrictEqual(encoded.data, ["99", "1"]);
+
+    const decoded = codec.decodeEvent("Log", encoded);
+    deepStrictEqual(decoded.value, 99n);
+    deepStrictEqual(decoded.flag, true);
+  });
+});
+
+describe("encodeEvent / decodeEvent one-off helpers", () => {
+  it("one-off matches codec output", () => {
+    const data: AbiEventType<typeof eventAbi, "Transfer"> = {
+      from: ADDR_A,
+      to: ADDR_B,
+      amount: 100n,
+    };
+    const codec = createTypedCodec(eventAbi);
+    const fromCodec = codec.encodeEvent("Transfer", data);
+    const fromOneOff = encodeEvent(eventAbi, "Transfer", data);
+    deepStrictEqual(fromOneOff, fromCodec);
+  });
+
+  it("one-off decode roundtrips", () => {
+    const data: AbiEventType<typeof eventAbi, "Transfer"> = {
+      from: ADDR_B,
+      to: ADDR_A,
+      amount: 77n,
+    };
+    const encoded = encodeEvent(eventAbi, "Transfer", data);
+    const decoded = decodeEvent(eventAbi, "Transfer", encoded);
+    deepStrictEqual(decoded.from, ADDR_B);
+    deepStrictEqual(decoded.to, ADDR_A);
+    deepStrictEqual(decoded.amount, 77n);
   });
 });
