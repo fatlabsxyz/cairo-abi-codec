@@ -1,5 +1,11 @@
 # @fatsolutions/cairo-abi-codec
 
+## 0.1.0
+
+### Minor Changes
+
+- 0c9c65c: Semi-stable release. Structs/Enums/Events/Constructors
+
 ## 0.0.4
 
 ### Patch Changes
