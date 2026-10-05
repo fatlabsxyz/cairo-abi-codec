@@ -47,6 +47,6 @@
   },
   "dependencies": {
     "abi-wan-kanabi": "^2.2.4",
-    "starknet": "^9.4.2"
+    "starknet": "^9.4.2 || ^10.0.0"
   }
 }
