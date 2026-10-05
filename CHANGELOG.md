@@ -1,5 +1,11 @@
 # @fatsolutions/cairo-abi-codec
 
+## 0.1.1
+
+### Patch Changes
+
+- 7c278c2: Support starknet.js v10: widen the `starknet` dependency range to `^9.4.2 || ^10.0.0` so consumers on v10 share a single starknet copy
+
 ## 0.1.0
 
 ### Minor Changes
